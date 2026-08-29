@@ -90,20 +90,23 @@ rotation formulas and XOR constants per field (to prevent batch string scanning)
 
 #### Decrypted field names
 
-| # | Length | XOR | Decrypted name | Purpose |
-|---|--------|-----|---------------|---------|
-| 1 | 14 | 0xFD | `PlaySessionId` | Current play session identifier |
-| 2 | 12 | 0xFD | `LastPlaceId` | Last visited place ID |
-| 3 | 11 | 0xFB | *(complex rotation)* | — |
-| 4 | 15 | 0xFD | *(complex rotation)* | — |
-| 5 | 16 | 0xFB | *(complex rotation)* | — |
-| 6 | 16 | 0xFB | *(complex rotation)* | — |
-| 7 | 9 | 0xFB | `MacQAPad` | macOS QA padding/identifier |
-| 8 | 12 | 0xFB | `MacQAConfig` | macOS QA configuration flags |
+| # | Length | XOR | Rotation formula | Decrypted name |
+|---|--------|-----|-----------------|---------------|
+| 1 | 14 | 0xFD | `rsh=((i&3)^2)+1, lsh=(i&3)^5` | `PlaySessionId` |
+| 2 | 12 | 0xFD | `rsh=(i&3)^6, lsh=(-((i&3)^6))&7` | `LastPlaceId` |
+| 3 | 11 | 0xFB | `rsh=(i&3)+1, lsh=7&~(i&3)` (BIC) | `UniverseId` |
+| 4 | 15 | 0xFD | `rsh=((i&3)^2)+3, lsh=(-3-((i&3)^2))&7` | `AppSessionIdL1` |
+| 5 | 16 | 0xFB | `rsh=(i&3)+1, lsh=7&~(i&3)` (BIC) | `AppSessionIdL2a` |
+| 6 | 16 | 0xFB | `rsh=(i&3)+1, lsh=7&~(i&3)` (BIC) | `AppSessionIdL2b` |
+| 7 | 9 | 0xFB | `rsh=(i&3)+2, lsh=(6-(i&3))&7` | `MacQAPad` |
+| 8 | 12 | 0xFB | `rsh=(i&3)+3, lsh=(5-(i&3))&7` | `MacQAConfig` |
 
-Fields 3–6 use more complex rotation formulas that resist simple brute-force
-(the rotation shift depends on `(i&3)` through nested EOR/ADD/SUB operations
-with varying constants per field).
+**Note:** Fields 5 and 6 have a register-reuse optimization at byte[8] — the
+`STURB` at `var_50` reuses `W8` from the previous `MOV W8, #0x29` without a new
+`MOV`, so the 16th byte in the encrypted array is `0x29` (same as byte[7]).
+
+All fields null-terminated. `L1`/`L2a`/`L2b` suffixes distinguish multiple
+app-session ID variants (likely different telemetry tiers or retry labels).
 
 #### Telemetry sending
 
