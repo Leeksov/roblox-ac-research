@@ -1,32 +1,42 @@
-# Roblox Anti-Cheat / RASP Research
+# Roblox iOS — Anti-Tamper & Integrity Verification Research
 
-Reverse-engineering documentation of the anti-cheat, integrity verification, and runtime
-application self-protection (RASP) systems in the iOS Roblox client (RobloxLib, arm64).
+Reverse-engineering of the **anti-tamper**, integrity verification, and server-side validation
+systems in the iOS Roblox client (`RobloxLib`, arm64).
 
-All addresses and analysis refer to the current RobloxLib build unless stated otherwise.
-Every function was identified via static analysis in IDA Pro and cross-referenced through
-string anchors, xrefs, and call-graph traversal. System import usage was audited to confirm
-no classic jailbreak/root detection or anti-debug via syscalls exists in the main binary.
+> **Important distinction:** This is **not** a classic anti-cheat (no environment scanning, no
+> jailbreak/root detection, no process inspection, no debugger detection). Roblox on iOS has
+> **no native anti-cheat** in the binary. What it has is **anti-tamper** (bytecode signature
+> verification, patch integrity) and **server-side validation** (challenge-response, physics
+> hash checks, device attestation). The Lua VM itself is not an anti-cheat — Lua scripts are
+> game logic written by place developers, not by Roblox's security team.
+
+All addresses refer to the current RobloxLib build. Every function was identified via static
+analysis in IDA Pro, cross-referenced through string anchors, xrefs, and call-graph traversal.
 
 ---
 
 ## Key findings
 
-- **No jailbreak detection in RobloxLib.** The binary imports `sysctl`/`sysctlbyname`/`task_info`
-  but they are used exclusively by Crashpad (crash reporter), not for anti-debug or P_TRACED checks.
-  No `ptrace`, `csops`, `sandbox_check`, or jailbreak file-existence checks exist.
-- **No anti-debug.** No `PT_DENY_ATTACH`, no `DYLD_INSERT_LIBRARIES` env checks, no code-signing
-  self-validation.
-- **Reaper.framework is NOT anti-cheat.** It is [Emerge Tools](https://www.emergetools.com/) dead-code
-  detection SDK. It scans ObjC/Swift types used at runtime for tree-shaking analytics. It only reads
-  binaries inside the `.app` bundle (filters by `hasPrefix: appPath`), does not scan for injected
-  dylibs, and does not report security events.
+- **No anti-cheat in RobloxLib.** No jailbreak detection, no anti-debug, no injection scanning,
+  no environment fingerprinting. The binary imports `sysctl`/`sysctlbyname`/`task_info` but they
+  are used exclusively by **Crashpad** (crash reporter). No `ptrace`, `csops`, `sandbox_check`,
+  or file-existence checks (`/Applications/Cydia.app`, etc.) exist.
+- **No `DYLD_INSERT_LIBRARIES` detection.** No `getenv` caller checks for injection-related
+  env vars. All `getenv` usage is SQLite, WebRTC, and OpenSSL configuration.
+- **Reaper.framework is NOT anti-cheat.** It is [Emerge Tools](https://www.emergetools.com/)
+  dead-code detection SDK (`com.emergetools.reaper`). Scans only app-bundle binaries for
+  ObjC/Swift type usage analytics. Does not scan for injected dylibs.
 - **The "external anti-cheat module"** referenced by the IOSSupport ObjC bridge
-  (`clientSendExtAntiCheat:`, `setExtAntiCheatJoinData:`) is **not present in the IPA**. It is either
-  downloaded at runtime or the bridge is a no-op on iOS.
-- **All protection is server-side or signature-based:** bytecode GF(2^128) hash verification,
-  US14116 server challenge-response, DataModel patch signing (Blake2b/Blake3), device integrity
-  (Apple App Attest), encryption layer thresholds, and FFlag-controlled telemetry pipelines.
+  (`clientSendExtAntiCheat:`, `setExtAntiCheatJoinData:`) is **not present in the IPA**.
+  The bridge is either a no-op on iOS or the module is downloaded at runtime.
+- **All protection is anti-tamper or server-side:**
+  - Bytecode signature verification (GF(2^128) Galois hash)
+  - DataModel patch signing (Blake2b / Blake3)
+  - US14116 server challenge-response (disconnect code 268)
+  - Device integrity (Apple App Attest, disconnect codes 296–300)
+  - RakNet encryption failure thresholds
+  - FFlag-controlled telemetry pipelines
+  - Physics/animation hash checks (server-side divergence detection)
 
 ---
 
@@ -34,25 +44,33 @@ no classic jailbreak/root detection or anti-debug via syscalls exists in the mai
 
 | Document | Contents |
 |---|---|
-| [`docs/DETECTION_MAP.md`](docs/DETECTION_MAP.md) | High-level architecture: all detection layers, flag setters, reporting paths |
+| [`docs/DETECTION_MAP.md`](docs/DETECTION_MAP.md) | High-level architecture: all protection layers, flag setters, reporting paths |
 | [`docs/BYTECODE_VERIFICATION.md`](docs/BYTECODE_VERIFICATION.md) | Bytecode signature verification: GF(2^128) Galois hash, trailer parsing, obfuscation tables |
 | [`docs/REPORTING_PATHS.md`](docs/REPORTING_PATHS.md) | Network reporting: 20+ disconnect codes, exit codes, crash classification, telemetry fields |
 | [`docs/DETECTION_SYSTEMS.md`](docs/DETECTION_SYSTEMS.md) | Independent systems: US14116 memcheck, external AC bridge, security channel, QoS heartbeat, device integrity, physics FPS detection |
 | [`docs/FFLAGS.md`](docs/FFLAGS.md) | 40+ security-relevant FFlags with string addresses and global variables |
-| [`docs/FUNCTION_INDEX.md`](docs/FUNCTION_INDEX.md) | Complete address table of 60+ identified AC/integrity functions |
+| [`docs/FUNCTION_INDEX.md`](docs/FUNCTION_INDEX.md) | Complete address table of 60+ identified integrity/validation functions |
 | [`docs/REAPER_ANALYSIS.md`](docs/REAPER_ANALYSIS.md) | Full reverse of Reaper.framework — proves it is dead-code analytics, not anti-cheat |
-| [`docs/SYSTEM_IMPORTS.md`](docs/SYSTEM_IMPORTS.md) | Audit of security-sensitive system imports (sysctl, ptrace, mprotect, etc.) |
+| [`docs/SYSTEM_IMPORTS.md`](docs/SYSTEM_IMPORTS.md) | Audit of all security-sensitive system imports (sysctl, ptrace, mprotect, etc.) |
+
+## What's NOT here (and why)
+
+- **Lua-side anti-cheat scripts** — individual Roblox *places* (games) can include their own
+  Lua anti-cheat scripts, but those are written by **place developers**, not Roblox. They run
+  inside the Lua VM like any game script and are not part of the native binary. They can be
+  dumped and analyzed per-place, but they are not covered here.
+- **Windows/macOS anti-cheat** — Roblox on desktop uses Hyperion (Byfron), a native anti-cheat
+  with kernel-level protections. This research covers **iOS only**, where no equivalent exists.
 
 ## Methodology
 
-1. **String anchoring** — search for known AC-related strings (`"HashMismatches"`, `"US14116"`,
-   `"AntiCheat"`, `"disconnect"`, etc.) and trace to referencing functions
-2. **Import audit** — enumerate all security-sensitive system imports (`sysctl`, `ptrace`, `task_info`,
-   `access`, `mprotect`, `getenv`, `dlopen`) and trace every caller to determine if it serves an
-   AC purpose
+1. **String anchoring** — search for known integrity strings (`"HashMismatches"`, `"US14116"`,
+   `"bytecode version mismatch"`, `"disconnect"`, etc.) and trace to referencing functions
+2. **Import audit** — enumerate all security-sensitive system imports (`sysctl`, `ptrace`,
+   `task_info`, `access`, `mprotect`, `getenv`, `dlopen`) and trace every caller
 3. **Xref traversal** — follow call graphs from identified entry points to map complete pipelines
 4. **FFlag enumeration** — search all `FFlag`/`DFFlag`/`FInt` strings and correlate with init functions
-5. **Framework analysis** — reverse every non-system framework in the IPA to identify external AC modules
+5. **Framework analysis** — reverse every non-system framework in the IPA (Reaper, Backtrace, Persona2)
 
 ## Credits
 
