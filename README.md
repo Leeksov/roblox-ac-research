@@ -29,14 +29,9 @@ analysis in IDA Pro, cross-referenced through string anchors, xrefs, and call-gr
 - **The "external anti-cheat module"** referenced by the IOSSupport ObjC bridge
   (`clientSendExtAntiCheat:`, `setExtAntiCheatJoinData:`) is **not present in the IPA**.
   The bridge is either a no-op on iOS or the module is downloaded at runtime.
-- **macOS has a native AC telemetry module** (absent on iOS). It scans all loaded `.dylib`
-  files via `_dyld_image_count`/`_dyld_get_image_name` and checks SIP status via an obfuscated
-  `dlopen("libSystem") + dlsym("csr_get_active_config")` call. Library/symbol names and all
-  8 telemetry field names are encrypted with per-field bit-rotation + XOR. Telemetry-only — no
-  local enforcement. Full analysis: [`docs/MACOS_ANALYSIS.md`](docs/MACOS_ANALYSIS.md).
-- **P_TRACED debugger check exists on macOS but is dead code** — `sub_101932D50` uses
-  `sysctl(KERN_PROC)` to check `kp_proc.p_flag & 0x800`, but has zero callers.
-- **All other protection is anti-tamper or server-side:**
+- **macOS analysis in separate repo:** [roblox-macos-research](https://github.com/Leeksov/roblox-macos-research) —
+  native AC telemetry module, NativeCodeGen, struct ABI differences, all decrypted strings.
+- **All protection is anti-tamper or server-side:**
   - Bytecode signature verification (GF(2^128) Galois hash)
   - DataModel patch signing (Blake2b / Blake3)
   - US14116 server challenge-response (disconnect code 268)
@@ -59,7 +54,7 @@ analysis in IDA Pro, cross-referenced through string anchors, xrefs, and call-gr
 | [`docs/FUNCTION_INDEX.md`](docs/FUNCTION_INDEX.md) | Complete address table of 60+ identified integrity/validation functions |
 | [`docs/REAPER_ANALYSIS.md`](docs/REAPER_ANALYSIS.md) | Full reverse of Reaper.framework — proves it is dead-code analytics, not anti-cheat |
 | [`docs/SYSTEM_IMPORTS.md`](docs/SYSTEM_IMPORTS.md) | Audit of all security-sensitive system imports (sysctl, ptrace, mprotect, etc.) |
-| [`docs/MACOS_ANALYSIS.md`](docs/MACOS_ANALYSIS.md) | **macOS-only:** native AC telemetry module (dylib scanner + SIP check + obfuscated strings) |
+| **macOS research** | See separate repo: [roblox-macos-research](https://github.com/Leeksov/roblox-macos-research) |
 
 ## What's NOT here (and why)
 
