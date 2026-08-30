@@ -204,3 +204,83 @@ to prevent static string scanning, not to resist dedicated reverse engineering.
 
 **Not imported:** `ptrace`, `csops`, `sandbox_check`, `vm_protect`, `mach_vm_*`,
 `SecTrustEvaluate`, `SecCodeCheckValidity`.
+
+---
+
+## 6. Luau VM Internals (macOS vs iOS)
+
+### Key addresses
+
+| Component | macOS address | iOS address | Notes |
+|-----------|--------------|-------------|-------|
+| `luau_load` | `0x102C29870` (5916B) | `0x43E2CE8` (5712B) | Same architecture |
+| `bytecode_authenticate` | `0x1014FFE90` (520B) | `0x172CC78` (520B) | Same size, same logic |
+| `parse_signature_trailer` | `0x1015000E8` (668B) | `0x172CED0` (640B) | Same structure |
+| `verify_hash_galois` | `0x1015010A8` | `0x172DC9C` (524B) | GF(2^128) core |
+| `telemetry_report` | `0x101500418` (1200B) | `0x172D184` (1280B) | cr_sigver/cr_err fields |
+| `InitFunc bytecode FFlags` | `0x1014FF9EC` (1052B) | `0x172C7D4` (1052B) | Same size |
+| Obfuscation tables T_index1 | `0x105EC83E4` | `0x4EBE7C4` | **Identical data** |
+| Obfuscation tables T_index2 | `0x105EC83EE` | `0x4EBE7CE` | **Identical data** |
+| Obfuscation tables T_values | `0x105EC83F8` | `0x4EBE7D8` | **Identical data** |
+| Obfuscation divisors | `0x105EC83C0` | `0x4EBE7A0` | **Identical data** |
+
+### Struct ABI differences (macOS vs iOS)
+
+| Field | macOS offset | iOS offset |
+|-------|-------------|------------|
+| `lua_State.gt` | `0x78` | `0x70` |
+| `global_State` (from L) | `L + 40` (0x28) | `L + 48` (0x30) |
+| `global_State.capabilities` | `gs + 1224` (0x4C8) | `gs + 1232` (0x4D0) |
+
+The capability bit-clear in `bytecode_authenticate`:
+- macOS: `*(DWORD*)(*(QWORD*)(a1 + 40) + 1224) &= ~0x40000000`
+- iOS: `*(DWORD*)(*(QWORD*)(a1 + 48) + 1232) &= ~0x40000000`
+
+### Opcode encryption
+
+The opcode multiplication factor on macOS is **x203** (vs iOS **x227**). The two
+256-byte permutation tables (T1 on-wire→internal, T2 internal→standard) are at
+different addresses but follow the same architecture. The bytecode authentication
+lookup tables (`T_index1`, `T_index2`, `T_values`, `T_divisors`) are **byte-for-byte
+identical** between iOS and macOS — the obfuscation logic is shared code.
+
+### NativeCodeGen (macOS-only)
+
+macOS has **Luau NativeCodeGen (JIT)** enabled, controlled by these FFlags:
+
+| FFlag | Global | Default | Purpose |
+|-------|--------|---------|---------|
+| `DebugLuauCodegenAll` | `byte_1071E9220` | 0 | Force codegen on all functions |
+| `DebugDisableCodegen` | `byte_1071E9358` | 0 | Disable codegen entirely |
+| `DebugDisableOptimizedBytecode` | `byte_1071E9340` | 0 | Disable optimized bytecode |
+| `LuauCodegenStatsEventHundredthsPercent` | `dword_1071E9238` | 0 | Codegen telemetry sampling |
+| `DebugNcgBasicUsageMetricsReportEverything` | `byte_1071E9250` | 0 | Report all NCG metrics |
+| `CloudClientLuauExecutionEnabled` | `byte_1071E9268` | 0 | Cloud Luau execution |
+| `LsbRccOptimizationForAll` | `byte_1071E9298` | 0 | LSB/RCC optimization |
+
+On iOS, NativeCodeGen is **disabled** — these FFlags don't exist in RobloxLib.
+`mprotect` is imported on macOS (23 callers) partly for JIT page management.
+
+### Bytecode FFlags (macOS addresses)
+
+| FFlag | Global | Purpose |
+|-------|--------|---------|
+| `RbxmBytecodeDisablePrehash` | `byte_1071E92C8` | Disable RBXM pre-hashing |
+| `LoadBytecodeWithSignatureAsHashKey` | `byte_1071E92E0` | Use signature as hash key |
+| `RemoveBytecodeCopyOnLoad` | `byte_1071E92F8` | Skip bytecode copy |
+| `InitializedOptions` | `byte_1071E9310` | Options initialized flag |
+| `DebugScriptDebuggingEnabled` | `byte_1071E9328` | Script debugger |
+| `GameLdrPerformanceReportSwitch1` | `dword_1071E91D8` | Perf reporting |
+| `GameLdrPerformanceReportSwitch2` | `dword_1071E91F0` | Perf reporting |
+| `GameLdrPerformanceCheckLimit` | `dword_1071E9208` | Perf check limit |
+| `RIDE11755` | `byte_1071E92B0` | Internal feature flag |
+
+### Signature verification globals (macOS)
+
+| Global | Address | Purpose |
+|--------|---------|---------|
+| `xmmword_1076E0720` | `0x1076E0720` | Bytecode auth state/counters |
+| `byte_1071E9418` | `0x1071E9418` | Signature enforcement toggle |
+| `dword_1071E93D0` | `0x1071E93D0` | Min bytecode size |
+| `dword_1071E93E8` | `0x1071E93E8` | Min signature version config |
+| `dword_1071E9400` | `0x1071E9400` | Max signature version |
